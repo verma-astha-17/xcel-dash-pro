@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # 🚀 AI Use Case Portfolio Dashboard
 
 A **production-ready Streamlit application** for Project Managers and executives to track AI adoption, ROI, and delivery status across 110 use cases spanning 11 SDLC phases.
@@ -212,3 +213,7 @@ To extend the dashboard:
 
 **Created by**: Senior Full-Stack AI Engineer & Lead UX Architect  
 **Last Updated**: March 2026
+=======
+# xcel-dash-pro
+This Proof of Concept (POC) demonstrates the automated generation of user interfaces (UI) by leveraging Excel-based data sources that contain multiple interrelated tables. The solution showcases how Copilot capabilities and agentic frameworks can interpret structured data, understand relationships across tables, and dynamically generating the UI.
+>>>>>>> 3c4b4aaa41a7fc31e0055e31e20bf668e6757bd1

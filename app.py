@@ -8,6 +8,8 @@ import pandas as pd
 import streamlit as st
 
 from core.data_engine import (
+    DEFAULT_ACCOUNT_CSV,
+    DEFAULT_CATALOGUE_CSV,
     PRIORITY_OPTIONS,
     SDLC_PHASES,
     STATUS_OPTIONS,
@@ -35,9 +37,6 @@ def configure_page() -> None:
 
 def initialize_app_state() -> None:
     """Initialize settings and filter state once."""
-    if "selected_data_file" not in st.session_state:
-        st.session_state.selected_data_file = discover_csv_file()
-
     if "settings_page_size" not in st.session_state:
         st.session_state.settings_page_size = 50
     if "settings_compact_table" not in st.session_state:
@@ -55,8 +54,8 @@ def initialize_app_state() -> None:
         st.session_state.filter_practices = []
     if "filter_phases" not in st.session_state:
         st.session_state.filter_phases = []
-    if "filter_priority" not in st.session_state:
-        st.session_state.filter_priority = []
+    if "filter_accounts" not in st.session_state:
+        st.session_state.filter_accounts = []
     if "filter_status" not in st.session_state:
         st.session_state.filter_status = []
 
@@ -71,24 +70,24 @@ def create_filters(df_exploded: pd.DataFrame) -> dict:
         st.session_state.filter_technology = []
         st.session_state.filter_practices = []
         st.session_state.filter_phases = []
-        st.session_state.filter_priority = []
+        st.session_state.filter_accounts = []
         st.session_state.filter_status = []
         st.rerun()
-    if quick_b.button("High Impact", use_container_width=True):
-        st.session_state.filter_priority = ["High", "Critical"]
-        st.session_state.filter_status = ["In Progress", "Not Started"]
+    if quick_b.button("In Production", use_container_width=True):
+        st.session_state.filter_status = ["In Production"]
         st.rerun()
 
     roles = sorted(df_exploded["Role"].dropna().unique().tolist())
     tech = sorted(df_exploded["Technology"].dropna().unique().tolist())
     practices = sorted(df_exploded["Practice_Applicability"].dropna().unique().tolist())
+    accounts = sorted(df_exploded["Account"].dropna().unique().tolist())
 
     return {
         "roles": st.sidebar.multiselect("Role", roles, key="filter_roles"),
         "technology": st.sidebar.multiselect("Technology", tech, key="filter_technology"),
         "practices": st.sidebar.multiselect("Practice", practices, key="filter_practices"),
         "phases": st.sidebar.multiselect("SDLC Phase", SDLC_PHASES, key="filter_phases"),
-        "priority": st.sidebar.multiselect("Priority", PRIORITY_OPTIONS, key="filter_priority"),
+        "accounts": st.sidebar.multiselect("Account", accounts, key="filter_accounts"),
         "status": st.sidebar.multiselect("Status", STATUS_OPTIONS, key="filter_status"),
     }
 
@@ -104,8 +103,8 @@ def apply_filters(df_exploded: pd.DataFrame, df_enriched: pd.DataFrame, filters:
         filtered = filtered[filtered["Practice_Applicability"].isin(filters["practices"])]
     if filters["phases"]:
         filtered = filtered[filtered["SDLC_Phase"].isin(filters["phases"])]
-    if filters["priority"]:
-        filtered = filtered[filtered["Priority"].isin(filters["priority"])]
+    if filters["accounts"]:
+        filtered = filtered[filtered["Account"].isin(filters["accounts"])]
     if filters["status"]:
         filtered = filtered[filtered["Status"].isin(filters["status"])]
 
@@ -114,22 +113,24 @@ def apply_filters(df_exploded: pd.DataFrame, df_enriched: pd.DataFrame, filters:
 
 
 def show_overview(df: pd.DataFrame, df_exploded: pd.DataFrame) -> None:
-    section_header("Overview", "Executive summary of AI use cases")
+    section_header("Overview", "Executive summary of GenAI use cases across accounts")
 
     saturation = calculate_phase_saturation(df)
     readiness = calculate_ai_readiness_score(df)
-    avg_roi_pct = float(df["ROI_Score"].mean() / 4 * 100) if not df.empty else 0.0
-    completed = int((df["Status"] == "Completed").sum())
+    in_production = int((df["Status"] == "In Production").sum())
+    blocked = int((df["Status"] == "Blocked").sum())
+    avg_prod_achieved = float(df["Productivity_Achieved_Pct"].mean()) if not df.empty else 0.0
+    unique_accounts = df["Account"].nunique() if not df.empty else 0
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         create_card("Total Use Cases", str(len(df)))
     with c2:
-        create_card("Completed", str(completed))
+        create_card("In Production", str(in_production))
     with c3:
-        create_card("Average ROI", f"{avg_roi_pct:.0f}%")
+        create_card("Avg Productivity Achieved", f"{avg_prod_achieved:.1f}%")
     with c4:
-        create_card("AI Readiness", f"{readiness:.1f}")
+        create_card("Accounts", str(unique_accounts))
 
     left, right = st.columns([2, 1])
     with left:
@@ -139,7 +140,7 @@ def show_overview(df: pd.DataFrame, df_exploded: pd.DataFrame) -> None:
         section_header("Status Mix", "Current execution health")
         st.plotly_chart(create_status_pie_chart(df), width="stretch")
 
-    section_header("Implementation Quadrant", "Effort, ROI, and complexity")
+    section_header("Productivity: Estimated vs Achieved", "Which use cases overperformed or underperformed")
     st.plotly_chart(create_implementation_quadrant(df), width="stretch")
 
 
@@ -158,16 +159,17 @@ def show_roadmap(df: pd.DataFrame, df_exploded: pd.DataFrame) -> None:
 def show_drilldown(df: pd.DataFrame) -> None:
     section_header("Drill-down", "Explore and export the detailed catalogue")
 
-    query = st.text_input("Search by name or ID")
+    query = st.text_input("Search by name, account, or ID")
     view = df.copy()
     if query:
         q = query.strip()
         view = view[
             view["Use_Case_Name"].str.contains(q, case=False, na=False)
             | view["Use_Case_ID"].str.contains(q, case=False, na=False)
+            | view["Account"].str.contains(q, case=False, na=False)
         ]
 
-    sort_options = ["Readiness_Score", "ROI_Score", "Use_Case_Name", "Status", "SDLC_Phase"]
+    sort_options = ["Readiness_Score", "Productivity_Achieved_Pct", "Use_Case_Name", "Status", "Account", "SDLC_Phase"]
     default_sort = st.session_state.settings_default_sort
     default_idx = sort_options.index(default_sort) if default_sort in sort_options else 0
     sort_col = st.selectbox("Sort by", sort_options, index=default_idx)
@@ -181,47 +183,31 @@ def show_drilldown(df: pd.DataFrame) -> None:
     view_page = view.head(page_size)
     st.caption(f"Showing {len(view_page)} of {len(view)} records")
 
+    display_cols = [c for c in [
+        "Use_Case_ID", "Use_Case_Name", "Account", "SDLC_Phase", "Status",
+        "Technology", "Productivity_Estimated", "Productivity_Achieved", "Readiness_Score",
+    ] if c in view_page.columns]
+
     st.dataframe(
-        view_page[
-            [
-                "Use_Case_ID",
-                "Use_Case_Name",
-                "SDLC_Phase",
-                "Priority",
-                "Status",
-                "Complexity",
-                "Effort_Estimate",
-                "ROI_Potential",
-                "Readiness_Score",
-            ]
-        ],
-        width="stretch",
+        view_page[display_cols],
+        use_container_width=True,
         hide_index=True,
         height=420 if compact else 620,
     )
-    st.download_button("Download CSV", data=view.to_csv(index=False), file_name="ai_use_cases_filtered.csv", mime="text/csv")
+    st.download_button("Download CSV", data=view.to_csv(index=False), file_name="genai_use_cases_filtered.csv", mime="text/csv")
 
 
 def show_settings(data_path: str) -> None:
-    section_header("Settings", "Data source, table behavior, and runtime controls")
+    section_header("Settings", "Data sources and table behavior")
 
-    csv_options = list_csv_files()
-    st.subheader("Data Source")
-    if not csv_options:
-        st.error("No CSV files were found in the data folder.")
-    else:
-        selected_idx = csv_options.index(data_path) if data_path in csv_options else 0
-        selected_file = st.selectbox("Active CSV file", csv_options, index=selected_idx)
-        st.caption("Files are discovered from the data folder automatically.")
+    st.subheader("Data Sources")
+    st.info(f"**Account Use Cases:** `{DEFAULT_ACCOUNT_CSV}`")
+    st.info(f"**GenAI Catalogue:** `{DEFAULT_CATALOGUE_CSV}`")
 
-        col_a, col_b = st.columns(2)
-        if col_a.button("Apply Selected File", use_container_width=True):
-            st.session_state.selected_data_file = selected_file
-            st.cache_data.clear()
-            st.rerun()
-        if col_b.button("Reload Data", use_container_width=True):
-            st.cache_data.clear()
-            st.rerun()
+    col_a, col_b = st.columns(2)
+    if col_a.button("Reload Data", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
 
     st.subheader("Drill-down Table")
     st.session_state.settings_page_size = st.slider(
@@ -237,10 +223,10 @@ def show_settings(data_path: str) -> None:
     )
     st.session_state.settings_default_sort = st.selectbox(
         "Default sort column",
-        ["Readiness_Score", "ROI_Score", "Use_Case_Name", "Status", "SDLC_Phase"],
-        index=["Readiness_Score", "ROI_Score", "Use_Case_Name", "Status", "SDLC_Phase"].index(
+        ["Readiness_Score", "Productivity_Achieved_Pct", "Use_Case_Name", "Status", "Account", "SDLC_Phase"],
+        index=["Readiness_Score", "Productivity_Achieved_Pct", "Use_Case_Name", "Status", "Account", "SDLC_Phase"].index(
             st.session_state.settings_default_sort
-            if st.session_state.settings_default_sort in ["Readiness_Score", "ROI_Score", "Use_Case_Name", "Status", "SDLC_Phase"]
+            if st.session_state.settings_default_sort in ["Readiness_Score", "Productivity_Achieved_Pct", "Use_Case_Name", "Status", "Account", "SDLC_Phase"]
             else "Readiness_Score"
         ),
     )
@@ -250,9 +236,10 @@ def show_settings(data_path: str) -> None:
     )
 
     st.subheader("Build Information")
-    st.write(f"Data file: {data_path}")
+    st.write(f"Account CSV: {DEFAULT_ACCOUNT_CSV}")
+    st.write(f"Catalogue CSV: {DEFAULT_CATALOGUE_CSV}")
     st.write(f"Theme primary color: {COLORS['primary']}")
-    st.success("Dashboard data source is file-backed from the data folder (no placeholder/mock mode).")
+    st.success("Dashboard is loaded from real org data (Account GenAI Use Cases + GenAI Use Cases Catalogue).")
 
 
 def main() -> None:
@@ -261,15 +248,10 @@ def main() -> None:
     selected = create_navigation()
 
     try:
-        # Keep selected file if available, otherwise auto-discover from data folder.
-        if not Path(st.session_state.selected_data_file).exists():
-            st.session_state.selected_data_file = discover_csv_file()
-        data_path = st.session_state.selected_data_file
+        df_enriched, df_exploded = load_and_clean_data()
     except FileNotFoundError as exc:
         st.error(str(exc))
         st.stop()
-
-    df_enriched, df_exploded = load_and_clean_data(data_path)
     filters = create_filters(df_exploded) if selected != "⚙️ Settings" else None
 
     if filters:
@@ -284,7 +266,7 @@ def main() -> None:
     elif selected == "🔍 Drill-down":
         show_drilldown(filtered_enriched)
     else:
-        show_settings(data_path)
+        show_settings(DEFAULT_ACCOUNT_CSV)
 
 
 if __name__ == "__main__":

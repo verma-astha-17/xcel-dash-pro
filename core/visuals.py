@@ -17,11 +17,13 @@ COLOR_TEXT_PRIMARY = "#0f172a"
 COLOR_TEXT_SECONDARY = "#64748b"
 
 STATUS_COLORS = {
-    "Not Started": "#94a3b8",
-    "In Progress": COLOR_WARNING,
-    "Completed": COLOR_SUCCESS,
-    "On Hold": COLOR_DANGER,
-    "Cancelled": "#64748b",
+    "In Production": COLOR_SUCCESS,
+    "In Development": COLOR_WARNING,
+    "Validation": "#a855f7",
+    "Deployment": "#06b6d4",
+    "Design": "#f97316",
+    "Ideation": "#94a3b8",
+    "Blocked": COLOR_DANGER,
 }
 
 
@@ -64,33 +66,35 @@ def create_pulse_plot(saturation_df: pd.DataFrame) -> go.Figure:
 
 
 def create_strategic_heatmap(df_exploded: pd.DataFrame) -> go.Figure:
-    heatmap = pd.crosstab(df_exploded["SDLC_Phase"], df_exploded["ROI_Potential"]).reindex(SDLC_PHASES, fill_value=0)
-    for c in ["Low", "Medium", "High", "Very High"]:
-        if c not in heatmap.columns:
-            heatmap[c] = 0
-    heatmap = heatmap[["Low", "Medium", "High", "Very High"]]
+    col_order = [s for s in STATUS_OPTIONS if s in df_exploded["Status"].unique()]
+    heatmap = pd.crosstab(df_exploded["SDLC_Phase"], df_exploded["Status"])
+    for s in STATUS_OPTIONS:
+        if s not in heatmap.columns:
+            heatmap[s] = 0
+    heatmap = heatmap[[s for s in STATUS_OPTIONS if s in heatmap.columns]]
 
     fig = go.Figure(
         go.Heatmap(
             z=heatmap.values,
-            x=heatmap.columns,
-            y=heatmap.index,
+            x=heatmap.columns.tolist(),
+            y=heatmap.index.tolist(),
             colorscale=[[0, "#eff6ff"], [0.5, "#93c5fd"], [1, COLOR_PRIMARY]],
             colorbar={"title": "Use Cases"},
         )
     )
     fig.update_layout(
         **_layout(),
-        title="Phase vs ROI Potential",
-        xaxis_title="ROI Potential",
+        title="Phase vs Development Status",
+        xaxis_title="Development Status",
         yaxis_title="SDLC Phase",
         height=420,
-        margin={"l": 130, "r": 40, "t": 60, "b": 40},
+        margin={"l": 200, "r": 40, "t": 60, "b": 40},
     )
     return fig
 
 
 def create_implementation_quadrant(df: pd.DataFrame) -> go.Figure:
+    """Scatter of Productivity Estimated vs Achieved, coloured by status."""
     fig = go.Figure()
     for status in STATUS_OPTIONS:
         subset = df[df["Status"] == status]
@@ -98,38 +102,52 @@ def create_implementation_quadrant(df: pd.DataFrame) -> go.Figure:
             continue
         fig.add_trace(
             go.Scatter(
-                x=subset["Effort_Days"],
-                y=subset["ROI_Score"],
+                x=subset["Productivity_Estimated_Pct"],
+                y=subset["Productivity_Achieved_Pct"],
                 mode="markers",
                 name=status,
                 marker={
-                    "size": subset["Complexity_Score"] * 14,
+                    "size": 12,
                     "color": STATUS_COLORS.get(status, "#94a3b8"),
                     "line": {"color": "#ffffff", "width": 1},
-                    "opacity": 0.8,
+                    "opacity": 0.85,
                 },
                 text=subset["Use_Case_Name"],
-                customdata=subset[["SDLC_Phase", "Priority", "Readiness_Score"]],
+                customdata=subset[["Account", "SDLC_Phase"]],
                 hovertemplate=(
                     "<b>%{text}</b><br>"
-                    "Effort: %{x} days<br>"
-                    "ROI: %{y}<br>"
-                    "Phase: %{customdata[0]}<br>"
-                    "Priority: %{customdata[1]}<br>"
-                    "Readiness: %{customdata[2]:.1f}<extra></extra>"
+                    "Estimated: %{x:.1f}%<br>"
+                    "Achieved: %{y:.1f}%<br>"
+                    "Account: %{customdata[0]}<br>"
+                    "Phase: %{customdata[1]}<extra></extra>"
                 ),
             )
         )
 
+    # Diagonal: achieved == estimated target line
+    all_pct = pd.concat([df["Productivity_Estimated_Pct"], df["Productivity_Achieved_Pct"]])
+    max_val = float(all_pct.max()) if not all_pct.empty else 25
+    max_val = max(max_val, 5)
+    fig.add_trace(
+        go.Scatter(
+            x=[0, max_val],
+            y=[0, max_val],
+            mode="lines",
+            line={"dash": "dash", "color": "#94a3b8", "width": 1},
+            name="Achieved = Estimated",
+            showlegend=True,
+        )
+    )
+
     fig.update_layout(
         **_layout(),
-        title="Implementation Quadrant (Effort vs ROI vs Complexity)",
+        title="Productivity: Estimated vs Achieved (%)",
         height=460,
         margin={"l": 50, "r": 20, "t": 60, "b": 40},
         legend_title_text="Status",
     )
-    fig.update_xaxes(type="log", title="Effort (days, log)", gridcolor="#e2e8f0")
-    fig.update_yaxes(title="ROI Score", range=[0.8, 4.2], dtick=1, gridcolor="#e2e8f0")
+    fig.update_xaxes(title="Productivity Estimated (%)", gridcolor="#e2e8f0")
+    fig.update_yaxes(title="Productivity Achieved (%)", gridcolor="#e2e8f0")
     return fig
 
 
@@ -193,29 +211,32 @@ def create_status_pie_chart(df: pd.DataFrame) -> go.Figure:
 
 
 def create_priority_complexity_heatmap(df: pd.DataFrame) -> go.Figure:
-    matrix = pd.crosstab(df["Priority"], df["Complexity_Score"]).reindex(
-        ["Low", "Medium", "High", "Critical"], fill_value=0
-    )
-    for c in [1, 2, 3]:
-        if c not in matrix.columns:
-            matrix[c] = 0
-    matrix = matrix[[1, 2, 3]]
+    """Stacked bar: use cases per Account broken down by Development Status."""
+    account_status = pd.crosstab(df["Account"], df["Status"])
+    for s in STATUS_OPTIONS:
+        if s not in account_status.columns:
+            account_status[s] = 0
+    account_status = account_status[[s for s in STATUS_OPTIONS if s in account_status.columns]]
 
-    fig = go.Figure(
-        data=go.Heatmap(
-            z=matrix.values,
-            x=["Low", "Medium", "High"],
-            y=matrix.index,
-            colorscale=[[0, "#fef3c7"], [0.5, "#fdba74"], [1, COLOR_DANGER]],
-            colorbar={"title": "Count"},
+    fig = go.Figure()
+    for status in account_status.columns:
+        fig.add_trace(
+            go.Bar(
+                x=account_status.index.tolist(),
+                y=account_status[status].tolist(),
+                name=status,
+                marker_color=STATUS_COLORS.get(status, "#94a3b8"),
+            )
         )
-    )
     fig.update_layout(
         **_layout(),
-        title="Priority vs Complexity",
-        xaxis_title="Complexity",
-        yaxis_title="Priority",
+        title="Use Cases per Account by Status",
+        barmode="stack",
+        xaxis_title="Account",
+        yaxis_title="Use Cases",
         height=420,
-        margin={"l": 100, "r": 40, "t": 60, "b": 40},
+        margin={"l": 60, "r": 40, "t": 60, "b": 130},
+        legend_title_text="Status",
+        xaxis_tickangle=-30,
     )
     return fig

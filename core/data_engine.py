@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import re
 from pathlib import Path
 from typing import Dict, Tuple
 
@@ -9,109 +11,128 @@ import pandas as pd
 import streamlit as st
 
 
-DELIMITER = ";#"
-DEFAULT_DATA_PATH = "data/ai_use_cases.csv"
+DEFAULT_ACCOUNT_CSV = "data/Account GenAI Use Cases.csv"
+DEFAULT_CATALOGUE_CSV = "data/GenAI Use Cases Catalogue.csv"
 DEFAULT_DATA_DIR = "data"
 
+# SDLC phases derived from real dataset phase values
 SDLC_PHASES = [
-    "Requirements",
-    "Architecture",
+    "Analysis Requirements",
     "Design",
-    "Development",
-    "Testing",
-    "Deployment",
-    "Maintenance",
-    "Operations",
-    "Optimization",
-    "Retirement",
-    "Support",
+    "Coding",
+    "Test",
+    "Deploy",
+    "Incident/Problem Management",
+    "Operate",
+    "Governance",
+    "Transition",
 ]
 
-STATUS_OPTIONS = ["Not Started", "In Progress", "Completed", "On Hold", "Cancelled"]
+# Development statuses mapped from Spanish source values
+STATUS_OPTIONS = [
+    "In Production",
+    "In Development",
+    "Validation",
+    "Deployment",
+    "Design",
+    "Ideation",
+    "Blocked",
+]
+
 PRIORITY_OPTIONS = ["Low", "Medium", "High", "Critical"]
 
-EFFORT_MAPPING: Dict[str, int] = {"XS": 1, "S": 3, "M": 10, "L": 25, "XL": 45}
 ROI_MAPPING: Dict[str, int] = {"Low": 1, "Medium": 2, "High": 3, "Very High": 4}
-COMPLEXITY_MAPPING: Dict[str, int] = {"Low": 1, "Medium": 2, "High": 3}
 
+_STATUS_MAPPING: Dict[str, str] = {
+    "producción": "In Production",
+    "produccion": "In Production",
+    "bloqueado": "Blocked",
+    "validación": "Validation",
+    "validacion": "Validation",
+    "desarrollo": "In Development",
+    "despliegue": "Deployment",
+    "diseño": "Design",
+    "diseno": "Design",
+    "ideación": "Ideation",
+    "ideacion": "Ideation",
+}
 
-def _normalize_effort(value: str) -> str:
-    text = str(value).upper()
-    for key in ["XS", "XL", "S", "M", "L"]:
-        if key in text:
-            return key
-    return "M"
+_READINESS_BY_STATUS: Dict[str, float] = {
+    "In Production": 1.0,
+    "Validation": 0.75,
+    "Deployment": 0.65,
+    "In Development": 0.5,
+    "Design": 0.3,
+    "Ideation": 0.15,
+    "Blocked": 0.1,
+}
 
-
-def _normalize_roi(value: str) -> str:
-    text = str(value).strip().lower().replace("veryhigh", "very high")
-    if "very high" in text:
-        return "Very High"
-    if "high" in text:
-        return "High"
-    if "medium" in text:
-        return "Medium"
-    if "low" in text:
-        return "Low"
-    return "Medium"
-
-
-def _normalize_complexity(value: str) -> str:
-    text = str(value).strip().lower()
-    if "high" in text:
-        return "High"
-    if "medium" in text:
-        return "Medium"
-    if "low" in text:
-        return "Low"
-    return "Medium"
+_ACTIVE_STATUSES = {"In Production", "Validation", "Deployment", "In Development"}
 
 
 def _normalize_status(value: str) -> str:
     text = str(value).strip().lower()
-    lookup = {
-        "not started": "Not Started",
-        "in progress": "In Progress",
-        "completed": "Completed",
-        "on hold": "On Hold",
-        "cancelled": "Cancelled",
-        "canceled": "Cancelled",
-    }
-    return lookup.get(text, "Not Started")
+    return _STATUS_MAPPING.get(text, "In Development")
 
 
-def _normalize_priority(value: str) -> str:
-    text = str(value).strip().lower()
-    lookup = {"low": "Low", "medium": "Medium", "high": "High", "critical": "Critical"}
-    return lookup.get(text, "Medium")
+def _parse_pct(value) -> float:
+    """Parse '10%' or '10' to float (returns 0.0 on failure)."""
+    text = str(value).strip().replace("%", "").replace(",", ".")
+    try:
+        return float(text)
+    except (ValueError, TypeError):
+        return 0.0
 
 
-def _split_values(value: str) -> list[str]:
-    return [v.strip() for v in str(value).split(DELIMITER) if str(v).strip()]
+def _parse_json_array(value) -> list[str]:
+    """Parse JSON array strings like '["ADM","C&CA"]' into plain Python lists."""
+    text = str(value).strip()
+    if not text or text in ("nan", "[]", ""):
+        return []
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, list):
+            return [str(x).strip() for x in parsed if str(x).strip()]
+    except (json.JSONDecodeError, ValueError):
+        pass
+    return [x.strip() for x in re.split(r"[;,]", text) if x.strip()]
+
+
+def _compute_effort_days(start, end) -> int:
+    """Estimate project duration in days from start/end date strings."""
+    try:
+        s = pd.to_datetime(str(start), errors="raise")
+        e = pd.to_datetime(str(end), errors="raise")
+        return max(1, min(int((e - s).days), 365))
+    except Exception:
+        return 30
+
+
+def _pct_to_roi_label(pct: float) -> str:
+    if pct >= 15:
+        return "Very High"
+    if pct >= 7:
+        return "High"
+    if pct >= 3:
+        return "Medium"
+    return "Low"
 
 
 @st.cache_data
-def load_data(filepath: str = DEFAULT_DATA_PATH) -> pd.DataFrame:
+def load_data(filepath: str = DEFAULT_ACCOUNT_CSV) -> pd.DataFrame:
     """Load raw CSV data from disk."""
     return pd.read_csv(filepath)
 
 
 def discover_csv_file(data_dir: str = DEFAULT_DATA_DIR) -> str:
-    """Discover the CSV file to use from the data directory.
-
-    Selection order:
-    1. Use DEFAULT_DATA_PATH if it exists.
-    2. Otherwise pick the most recently modified CSV in data_dir.
-    """
-    default_path = Path(DEFAULT_DATA_PATH)
-    if default_path.exists():
-        return str(default_path)
-
+    """Return the Account GenAI Use Cases CSV path (primary data file)."""
+    primary = Path(DEFAULT_ACCOUNT_CSV)
+    if primary.exists():
+        return str(primary)
     directory = Path(data_dir)
     csv_files = sorted(directory.glob("*.csv"), key=lambda p: p.stat().st_mtime, reverse=True)
     if not csv_files:
         raise FileNotFoundError(f"No CSV files found in '{data_dir}'.")
-
     return str(csv_files[0])
 
 
@@ -124,102 +145,118 @@ def list_csv_files(data_dir: str = DEFAULT_DATA_DIR) -> list[str]:
     return [str(p) for p in csv_files]
 
 
-def normalize_schema(df: pd.DataFrame) -> pd.DataFrame:
-    """Map incoming CSV schema to dashboard canonical columns."""
-    canonical = {
-        "Use_Case_ID": "Use_Case_ID",
-        "Use_Case_Name": "Use_Case_Name",
-        "SDLC_Phase": "SDLC_Phase",
-        "Priority": "Priority",
-        "Status": "Status",
-        "Effort_Estimate": "Effort_Estimate",
-        "ROI_Potential": "ROI_Potential",
-        "Complexity": "Complexity",
+def _load_account_csv(filepath: str) -> pd.DataFrame:
+    """Load and rename columns for the Account GenAI Use Cases CSV."""
+    df = pd.read_csv(filepath)
+    rename_map = {
+        "Use Case Name": "Use_Case_Name",
+        "Account": "Account",
+        "Engagement Code": "Engagement_Code",
+        "Description": "Use_Case_Description",
+        "Use Case linked": "Use_Case_Linked",
+        "Use Case linked:Phase View": "SDLC_Phase",
+        "GenAI Technology": "Technology",
+        "Development Status": "Status",
+        "Principal SME": "SME",
+        "Stakeholders": "Stakeholders",
+        "Start Date": "Start_Date",
+        "End Date": "End_Date",
+        "%Productivity Estimated": "Productivity_Estimated",
+        "%Productivity Achieved": "Productivity_Achieved",
+        "Lessons learnt": "Lessons_Learnt",
+        "Comments": "Comments",
+    }
+    return df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
+
+
+def _load_catalogue_csv(filepath: str) -> pd.DataFrame:
+    """Load and rename columns for the GenAI Use Cases Catalogue CSV."""
+    df = pd.read_csv(filepath)
+    rename_map = {
+        "Phase": "Cat_Phase",
+        "Process": "Process",
+        "Title": "Use_Case_Linked",
         "Role": "Role",
-        "Technology": "Technology",
-        "Practice_Applicability": "Practice_Applicability",
-        "Use_Case_Description": "Use_Case_Description",
-        "Expected_Benefits": "Expected_Benefits",
-        "Implementation_Timeline": "Implementation_Timeline",
+        "Technology": "Cat_Technology",
+        "Practice applicability": "Practice_Applicability",
+        "Use Case SPOC": "SPOC",
+        "Use Case Page": "Use_Case_Page",
+        "Use Case Maturity": "Maturity",
     }
+    return df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
 
-    aliases = {
-        "Sr No": "_sr_no",
-        "Use Case": "Use_Case_Name",
-        "Phase": "SDLC_Phase",
-        "Use Case Description": "Use_Case_Description",
-        "Expected Benefits": "Expected_Benefits",
-        "Practice Applicability": "Practice_Applicability",
-        "Effort Estimate": "Effort_Estimate",
-        "ROI Potential": "ROI_Potential",
-        "Implementation Timeline": "Implementation_Timeline",
-    }
 
-    working = df.rename(columns=aliases).copy()
+def normalize_schema(account_df: pd.DataFrame, catalogue_df: pd.DataFrame) -> pd.DataFrame:
+    """Merge account deployments with catalogue master data and normalize columns."""
+    cat_cols = [c for c in ["Use_Case_Linked", "Role", "Practice_Applicability", "Cat_Phase", "Maturity", "Process"] if c in catalogue_df.columns]
+    cat_sub = catalogue_df[cat_cols].drop_duplicates(subset=["Use_Case_Linked"])
 
-    if "Use_Case_ID" not in working.columns:
-        if "_sr_no" in working.columns:
-            working["Use_Case_ID"] = working["_sr_no"].apply(lambda x: f"UC-{int(x):03d}")
-        else:
-            working["Use_Case_ID"] = [f"UC-{i:03d}" for i in range(1, len(working) + 1)]
+    merged = account_df.merge(cat_sub, on="Use_Case_Linked", how="left")
+    merged["Use_Case_ID"] = [f"UC-{i:03d}" for i in range(1, len(merged) + 1)]
 
-    for col in canonical:
-        if col not in working.columns:
-            working[col] = ""
+    # Fill SDLC_Phase from catalogue Cat_Phase when account phase is missing
+    if "Cat_Phase" in merged.columns:
+        merged["SDLC_Phase"] = merged["SDLC_Phase"].fillna(merged["Cat_Phase"])
+    merged["SDLC_Phase"] = merged["SDLC_Phase"].fillna("").astype(str).str.strip()
 
-    working = working[list(canonical.keys())]
+    merged["Status"] = merged["Status"].apply(_normalize_status)
+    merged["Technology"] = merged["Technology"].fillna("Unknown").astype(str).str.strip()
+    merged["Account"] = merged["Account"].fillna("Unknown").astype(str).str.strip()
+    merged["Use_Case_Name"] = merged["Use_Case_Name"].fillna("").astype(str).str.strip()
+    merged["Use_Case_Description"] = merged["Use_Case_Description"].fillna("").astype(str) if "Use_Case_Description" in merged.columns else ""
+    merged["Maturity"] = merged["Maturity"].fillna("Unknown").astype(str) if "Maturity" in merged.columns else "Unknown"
+    merged["Role"] = merged["Role"].fillna("[]").astype(str)
+    merged["Practice_Applicability"] = merged["Practice_Applicability"].fillna("[]").astype(str)
 
-    working["SDLC_Phase"] = working["SDLC_Phase"].astype(str).str.strip().str.title()
-    working["Priority"] = working["Priority"].apply(_normalize_priority)
-    working["Status"] = working["Status"].apply(_normalize_status)
-    working["Effort_Estimate"] = working["Effort_Estimate"].apply(_normalize_effort)
-    working["ROI_Potential"] = working["ROI_Potential"].apply(_normalize_roi)
-    working["Complexity"] = working["Complexity"].apply(_normalize_complexity)
+    merged["Productivity_Estimated_Pct"] = merged["Productivity_Estimated"].apply(_parse_pct) if "Productivity_Estimated" in merged.columns else 0.0
+    merged["Productivity_Achieved_Pct"] = merged["Productivity_Achieved"].apply(_parse_pct) if "Productivity_Achieved" in merged.columns else 0.0
 
-    for col in ["Role", "Technology", "Practice_Applicability"]:
-        working[col] = working[col].astype(str).str.replace(";", DELIMITER, regex=False)
-        working[col] = working[col].astype(str).str.replace(f"{DELIMITER}{DELIMITER}", DELIMITER, regex=False)
+    merged["Effort_Days"] = merged.apply(
+        lambda r: _compute_effort_days(r.get("Start_Date", ""), r.get("End_Date", "")), axis=1
+    )
+    merged["ROI_Potential"] = merged["Productivity_Estimated_Pct"].apply(_pct_to_roi_label)
+    merged["ROI_Score"] = merged["ROI_Potential"].map(ROI_MAPPING).fillna(2).astype(float)
+    merged["Priority"] = "Medium"
+    merged["Complexity"] = "Medium"
+    merged["Complexity_Score"] = 2
 
-    return working
+    return merged
 
 
 def enrich_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    """Add numeric columns used by charts and KPIs."""
+    """Add Readiness_Score derived from status and productivity."""
     out = df.copy()
-    out["Effort_Days"] = out["Effort_Estimate"].map(EFFORT_MAPPING).fillna(10)
-    out["ROI_Score"] = out["ROI_Potential"].map(ROI_MAPPING).fillna(2)
-    out["Complexity_Score"] = out["Complexity"].map(COMPLEXITY_MAPPING).fillna(2)
-
-    out["Readiness_Score"] = (
-        (out["ROI_Score"] / 4 * 40)
-        + ((4 - out["Complexity_Score"]) / 3 * 25)
-        + ((45 - out["Effort_Days"]) / 45 * 20)
-        + (out["Status"].map({"Completed": 1.0, "In Progress": 0.6}).fillna(0) * 15)
-    ).clip(0, 100)
-
+    status_score = out["Status"].map(_READINESS_BY_STATUS).fillna(0.0)
+    prod_score = (out["Productivity_Achieved_Pct"] / 20.0).clip(0, 1)
+    out["Readiness_Score"] = (status_score * 60 + prod_score * 40).clip(0, 100)
     return out
 
 
 def explode_multivalued_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Create exploded rows for multi-valued filtering columns."""
+    """Parse JSON array columns (Role, Practice_Applicability) and explode rows."""
     exploded = df.copy()
-    for col in ["Role", "Technology", "Practice_Applicability"]:
-        exploded[col] = exploded[col].apply(_split_values)
-    exploded = exploded.explode("Role").explode("Technology").explode("Practice_Applicability")
-    exploded = exploded.dropna(subset=["Role", "Technology", "Practice_Applicability"])
-    return exploded
+    exploded["Role"] = exploded["Role"].apply(_parse_json_array)
+    exploded["Practice_Applicability"] = exploded["Practice_Applicability"].apply(_parse_json_array)
+    exploded = exploded.explode("Role").explode("Practice_Applicability")
+    for col in ["Role", "Practice_Applicability"]:
+        exploded[col] = exploded[col].fillna("Unknown").replace("", "Unknown")
+    exploded["Technology"] = exploded["Technology"].fillna("Unknown").astype(str)
+    return exploded.dropna(subset=["Use_Case_Name"]).reset_index(drop=True)
 
 
 def calculate_phase_saturation(df: pd.DataFrame) -> pd.DataFrame:
-    """Compute active saturation for each SDLC phase."""
+    """Compute active saturation for each SDLC phase present in data."""
+    phases_known = [p for p in SDLC_PHASES if p in df["SDLC_Phase"].values]
+    phases_other = [p for p in df["SDLC_Phase"].dropna().unique() if p and p not in SDLC_PHASES]
     rows = []
-    for phase in SDLC_PHASES:
+    for phase in phases_known + phases_other:
         phase_df = df[df["SDLC_Phase"] == phase]
         total = len(phase_df)
-        active = len(phase_df[phase_df["Status"].isin(["In Progress", "Completed"])])
-        saturation = (active / total * 100) if total else 0
-        rows.append({"Phase": phase, "Total": total, "Active": active, "Saturation": saturation})
-    return pd.DataFrame(rows)
+        if total == 0:
+            continue
+        active = len(phase_df[phase_df["Status"].isin(_ACTIVE_STATUSES)])
+        rows.append({"Phase": phase, "Total": total, "Active": active, "Saturation": active / total * 100})
+    return pd.DataFrame(rows) if rows else pd.DataFrame(columns=["Phase", "Total", "Active", "Saturation"])
 
 
 def calculate_ai_readiness_score(df: pd.DataFrame) -> float:
@@ -230,11 +267,14 @@ def calculate_ai_readiness_score(df: pd.DataFrame) -> float:
 
 
 @st.cache_data
-def load_and_clean_data(filepath: str | None = None) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """Load CSV and return both enriched and exploded dataframes."""
-    resolved_path = filepath or discover_csv_file()
-    raw = load_data(resolved_path)
-    normalized = normalize_schema(raw)
+def load_and_clean_data(
+    account_path: str = DEFAULT_ACCOUNT_CSV,
+    catalogue_path: str = DEFAULT_CATALOGUE_CSV,
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """Load both CSVs, merge, enrich, and return (enriched, exploded) DataFrames."""
+    account_df = _load_account_csv(account_path)
+    catalogue_df = _load_catalogue_csv(catalogue_path)
+    normalized = normalize_schema(account_df, catalogue_df)
     enriched = enrich_dataframe(normalized)
     exploded = explode_multivalued_columns(enriched)
     return enriched, exploded

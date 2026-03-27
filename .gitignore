@@ -21,6 +21,9 @@ env/
 Thumbs.db
 .vscode/
 
+# Frontend dependencies
+frontend/node_modules/
+
 # Secrets
 .env
 .env.*

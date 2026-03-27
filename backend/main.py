@@ -117,6 +117,18 @@ def maturity_by_phase():
     return _wrap(_query.maturity_by_phase())
 
 
+@app.get("/api/implementations-by-account-phase", tags=["charts"])
+def implementations_by_account_phase():
+    """Count of use cases per account × SDLC phase (stacked bar data)."""
+    return _wrap(_query.implementations_by_account_phase())
+
+
+@app.get("/api/implementations-by-account-technology", tags=["charts"])
+def implementations_by_account_technology():
+    """Count of use cases per account × GenAI technology (stacked bar data)."""
+    return _wrap(_query.implementations_by_account_technology())
+
+
 # ── Filter helpers ────────────────────────────────────────────────────────────
 
 @app.get("/api/filters/options", tags=["filters"])

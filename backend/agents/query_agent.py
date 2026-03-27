@@ -166,6 +166,42 @@ class QueryAgent:
             ],
         }
 
+    # ── Implementations by Account × Phase ──────────────────────────────────────
+
+    def implementations_by_account_phase(self) -> list[dict]:
+        sql = """
+        SELECT
+            COALESCE(TRIM(a."Account"), 'Unknown') AS account,
+            COALESCE(
+                NULLIF(TRIM(a."Use Case linked:Phase View"), ''),
+                NULLIF(TRIM(c."Phase"), ''),
+                'Unknown'
+            ) AS phase,
+            COUNT(*) AS count
+        FROM   account_genai_use_cases a
+        LEFT JOIN genai_use_cases_catalogue c
+               ON TRIM(a."Use Case linked") = TRIM(c."Title")
+        WHERE  a."Account" IS NOT NULL AND TRIM(a."Account") != ''
+        GROUP  BY 1, 2
+        ORDER  BY 1, 3 DESC
+        """
+        return self.dl.query(sql)
+
+    # ── Implementations by Account × Technology ───────────────────────────────────
+
+    def implementations_by_account_technology(self) -> list[dict]:
+        sql = """
+        SELECT
+            COALESCE(TRIM(a."Account"), 'Unknown')                       AS account,
+            COALESCE(NULLIF(TRIM(a."GenAI Technology"), ''), 'Unknown')  AS technology,
+            COUNT(*) AS count
+        FROM   account_genai_use_cases a
+        WHERE  a."Account" IS NOT NULL AND TRIM(a."Account") != ''
+        GROUP  BY 1, 2
+        ORDER  BY 1, 3 DESC
+        """
+        return self.dl.query(sql)
+
     # ── Paginated use-cases (filtered) ─────────────────────────────────────────
 
     def use_cases(

@@ -1,15 +1,13 @@
 import {
   useSummaryKPIs,
   useStatusDistribution,
-  usePhaseAdoption,
-  useProductivityByAccount,
-  useTechnologyDistribution,
+  useImplementationsByAccountPhase,
+  useImplementationsByAccountTechnology,
 } from '../api/hooks'
 import KPICards from '../components/KPICards'
 import StatusChart from '../components/StatusChart'
-import PhaseChart from '../components/PhaseChart'
-import ProductivityChart from '../components/ProductivityChart'
-import TechnologyChart from '../components/TechnologyChart'
+import AccountPhaseChart from '../components/AccountPhaseChart'
+import AccountTechnologyChart from '../components/AccountTechnologyChart'
 import Loader, { CardSkeleton } from '../components/Loader'
 
 function SectionHeader({ title, subtitle }: { title: string; subtitle: string }) {
@@ -31,18 +29,18 @@ function ApiError({ message }: { message: string }) {
 }
 
 export default function Dashboard() {
-  const kpis         = useSummaryKPIs()
-  const status       = useStatusDistribution()
-  const phase        = usePhaseAdoption()
-  const productivity = useProductivityByAccount()
-  const technology   = useTechnologyDistribution()
+  const kpis     = useSummaryKPIs()
+  const status   = useStatusDistribution()
+  const accPhase = useImplementationsByAccountPhase()
+  const accTech  = useImplementationsByAccountTechnology()
 
   return (
     <div className="max-w-7xl mx-auto px-6 py-8 space-y-8">
+      {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold text-slate-900">GenAI Portfolio Overview</h1>
+        <h1 className="text-2xl font-bold text-slate-900">Usecase Dashboard</h1>
         <p className="text-sm text-slate-400 mt-1">
-          Live data from CSV files via DuckDB — no manual ETL required
+          GenAI use cases portfolio — live data via DuckDB, no manual ETL
         </p>
       </div>
 
@@ -59,40 +57,51 @@ export default function Dashboard() {
         ) : null}
       </section>
 
-      {/* Status + Phase */}
-      <section className="space-y-3">
-        <SectionHeader title="Status & Phase Breakdown" subtitle="Execution health and SDLC coverage" />
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {status.isLoading ? <Loader /> : status.data ? <StatusChart data={status.data} /> : null}
-          {phase.isLoading  ? <Loader /> : phase.data  ? <PhaseChart  data={phase.data}  /> : null}
-        </div>
-      </section>
-
-      {/* Productivity */}
+      {/* Priority Chart 1 — Implementations by Account & SDLC Phase */}
       <section className="space-y-3">
         <SectionHeader
-          title="Productivity by Account"
-          subtitle="Average estimated vs achieved productivity gain (%)"
+          title="Implementations by Account & SDLC Phase"
+          subtitle="How many use cases each account runs, broken down by SDLC phase"
         />
-        {productivity.isLoading ? (
+        {accPhase.isLoading ? (
           <Loader />
-        ) : productivity.data ? (
-          <ProductivityChart data={productivity.data} />
+        ) : accPhase.error ? (
+          <ApiError message="Failed to load phase data" />
+        ) : accPhase.data ? (
+          <AccountPhaseChart data={accPhase.data} />
         ) : null}
       </section>
 
-      {/* Technology */}
+      {/* Priority Chart 2 — Implementations by Account & Technology */}
       <section className="space-y-3">
         <SectionHeader
-          title="Technology Distribution"
-          subtitle="GenAI technologies in use across the portfolio"
+          title="Implementations by Account & Technology"
+          subtitle="GenAI technology stack per account"
         />
-        {technology.isLoading ? (
+        {accTech.isLoading ? (
           <Loader />
-        ) : technology.data ? (
-          <TechnologyChart data={technology.data} />
+        ) : accTech.error ? (
+          <ApiError message="Failed to load technology data" />
+        ) : accTech.data ? (
+          <AccountTechnologyChart data={accTech.data} />
+        ) : null}
+      </section>
+
+      {/* Priority Chart 3 — Use Cases by Status */}
+      <section className="space-y-3">
+        <SectionHeader
+          title="Use Cases by Status"
+          subtitle="Current development status across all implementations"
+        />
+        {status.isLoading ? (
+          <Loader />
+        ) : status.error ? (
+          <ApiError message="Failed to load status data" />
+        ) : status.data ? (
+          <StatusChart data={status.data} />
         ) : null}
       </section>
     </div>
   )
 }
+

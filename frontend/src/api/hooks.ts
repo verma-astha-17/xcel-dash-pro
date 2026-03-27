@@ -7,6 +7,8 @@ import type {
   ProductivityItem,
   TechnologyItem,
   MaturityItem,
+  AccountPhaseItem,
+  AccountTechnologyItem,
   UseCasesResponse,
   FilterOptions,
 } from '../types'
@@ -47,6 +49,18 @@ export const useMaturityByPhase = () =>
   useQuery({
     queryKey: ['maturity-by-phase'],
     queryFn: () => apiFetch<MaturityItem[]>('/api/maturity-by-phase'),
+  })
+
+export const useImplementationsByAccountPhase = () =>
+  useQuery({
+    queryKey: ['implementations-by-account-phase'],
+    queryFn: () => apiFetch<AccountPhaseItem[]>('/api/implementations-by-account-phase'),
+  })
+
+export const useImplementationsByAccountTechnology = () =>
+  useQuery({
+    queryKey: ['implementations-by-account-technology'],
+    queryFn: () => apiFetch<AccountTechnologyItem[]>('/api/implementations-by-account-technology'),
   })
 
 // ── Filter options ────────────────────────────────────────────────────────────

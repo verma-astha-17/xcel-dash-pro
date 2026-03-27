@@ -45,6 +45,18 @@ export interface MaturityItem {
   count: number
 }
 
+export interface AccountPhaseItem {
+  account: string
+  phase: string
+  count: number
+}
+
+export interface AccountTechnologyItem {
+  account: string
+  technology: string
+  count: number
+}
+
 // ── Drill-down ────────────────────────────────────────────────────────────────
 
 export interface UseCase {
